@@ -13,8 +13,11 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+    
+    Modified in 2020 by Wojciech M. Zabołotny
+    Converted for operation with MicroPython
+    
 """
-import pigpio
 import time
 
 
@@ -22,9 +25,13 @@ INT_NH = 0b0001
 INT_D = 0b0100
 INT_L = 0b1000
 
+NOfPulses = 0
+def CountPulses(pin):
+    global NOfPulses
+    NOfPulses += 1
 
 class AS3935:
-    def __init__(self, irq, bus=1, address=0x03):
+    def __init__(self, irq, i2c, address=0x03):
         """
         Configure the main parameters of AS3935.
 
@@ -33,10 +40,8 @@ class AS3935:
         :param address: (int, optional) the address of the AS3935. Default = 0x03
         """
         self.address = address
-        self.bus = bus
         self.irq = irq
-        self.pi = pigpio.pi()
-        self.i2c_device = self.pi.i2c_open(bus, address)
+        self.i2c = i2c
 
     # ------ CROSS FUNCTIONS ------ #
 
@@ -47,7 +52,7 @@ class AS3935:
         :param address: (int) the address to read from
         :return: (int) the value of the address
         """
-        return self.pi.i2c_read_byte_data(self.i2c_device, address)
+        return int(self.i2c.readfrom_mem(self.address,address,1)[0])
 
     def write_byte(self, address, value):
         """
@@ -59,7 +64,7 @@ class AS3935:
         """
         if not 0 <= value <= 255:
             raise ValueError("The value should be between 0x00 and 0xFF")
-        self.pi.i2c_write_byte_data(self.i2c_device, address, value)
+        self.i2c.writeto_mem(self.address,address, bytes([value,]))
         time.sleep(0.002)
 
     def full_calibration(self, tuning_cap):
@@ -411,7 +416,9 @@ class AS3935:
         :param seconds: (int) number of seconds while it should count spikes
         :return: (int) internal frequency
         """
-        cb = self.pi.callback(self.irq)
+        global NOfPulses
+        NOfPulses = 0
+        self.irq.irq(CountPulses)
 
         # Count pulses
         self.set_display_lco(True)
@@ -421,8 +428,8 @@ class AS3935:
         end = time.time()
 
         # Calculate the frequency. Not with seconds, because it is not exact
-        freq = cb.tally() / (end-start)
-        cb.cancel()
+        self.irq.irq(None)
+        freq = NOfPulses / (end-start)
         return freq
 
     def get_frequency_division_ratio(self):
